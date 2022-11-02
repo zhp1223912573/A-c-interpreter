@@ -154,7 +154,7 @@ void next(){
                     token = *++src;
                     while((token>='0'&&token<='9')||(token>='a'&&token<='f')||(token>='A'&&token<='F')){
                         //这里的（token&15）获取16进制的个位，token>='A'用于判断是超出A，超出需要加9
-                        //尝试带入'A'（41）或者'a'（61）就可以理解这里的含义。
+                        //尝试带入'A'（65）或者'a'（97）就可以理解这里的含义。
                         token_val = token_val*16 + (token&15) + (token>='A'?9:0);
                         token = *++src;
                     }
@@ -472,6 +472,32 @@ void function_body(){
     *text = LEV;
 }
 
+/**
+ * 
+ * int demo(int param_a, int *param_b) {
+    int local_1;
+    char local_2;
+
+    ...
+}
+上述函数被调用时栈中状态
+ |    ....       | high address
++---------------+
+| arg: param_a  |    new_bp + 3
++---------------+
+| arg: param_b  |    new_bp + 2
++---------------+
+|return address |    new_bp + 1
++---------------+
+| old BP        | <- new BP
++---------------+
+| local_1       |    new_bp - 1
++---------------+
+| local_2       |    new_bp - 2
++---------------+
+|    ....       |  low address
+
+*/
 //函数声明解析
 void function_declaration(){
     //type func_name (...) {...}
@@ -496,6 +522,133 @@ void function_declaration(){
     }
 }
 
+//语句分析 语句=表达式+;
+void statement(){
+
+    // 1. if (...) <statement> [else <statement>]
+    // 2. while (...) <statement>
+    // 3. { <statement> }
+    // 4. return xxx;
+    // 5. <empty statement>;
+    // 6. expression; (expression end with semicolon)
+
+
+    int *a,*b;//跳转地址
+
+
+
+    //if语句分析
+    /**
+      if (...) <statement> [else <statement>]
+
+    if (<cond>)                   <cond>
+                                 JZ a
+    <true_statement>   ===>     <true_statement>
+    else:                        JMP b
+    a:                           a:
+    <false_statement>           <false_statement>
+    b:                           b: 
+
+    if语句条件成立就进入true_statement中进行执行，
+    不成立需要进入false_statement中，也就是JZ a
+    同时，如果true_statement执行完成，为了避免顺序执行false_statement
+    需要跳转到最后，也就是JMP b
+    */
+   if(token==If){
+
+        match(If);
+        match('(');
+        expression(Assign); //解析条件
+        match(')');
+
+        *++text = JZ;   //按照上述分析，加入JZ
+        b = ++text;     //保存JZ指令后一位置，等待后续语句解析完成，在该位置填入if语句结束的位置，这样才能在条件不满出时跳出if语句
+
+        statement();    //递归解析
+
+        if(token==Else){
+            match(Else);
+
+            //填入JMP b
+            *b = (int)(text+3); //这里先填入上述讲解中的a：,也就是false_statement前的a:
+            *++text = JMP;        //填入JMP
+            b = ++text;         //同样先指向JMP指令后一位置，因为我们还不知道要跳转到的b位置的具体地址，需要等待else中的语句解析完成 
+
+            statement();        //递归解析
+        }
+
+        *b = (int)(text+1);     //写入上文预留的填写b位置地址空间
+   }
+
+   /**while语句
+    * 
+   a:                    a:
+   while (<cond>)        <cond>
+                         JZ b
+    <statement>          <statement>
+                         JMP a
+    b:                   b:
+    * 
+   */
+    else if(token==While){
+        match(While);
+        a = text+1;     //保留a位置指针
+
+        mathch('(');
+        expression(Assign);
+        match(')');
+
+        *++text = JZ;
+        b = ++text;     //预留JZ参数位置
+
+        statement();    //递归解析
+
+        *++text = JMP;    //写入JMP a
+        *++text = (int)a;  
+
+        *b = (int)(text+1); //写入JZ的b
+    }
+
+    /**return 语句
+     * 遇到return意味函数退出，需要写入LEV指令
+    */
+   else if(token==Return){
+        match(Return);
+
+        if(token!=';'){
+            expression(Assign);
+        }
+
+        match(";");
+
+        *++text = LEV;
+   }
+
+    /**
+     {<statement> }
+    */
+   else if(token=='{'){
+        match('{');
+        while(token!='}'){
+            statement();
+        }
+        match('}');
+   }
+   /**
+    * <empty statement>
+   */
+   else if(token==';'){
+        match(';');
+   }
+    /**
+     a=b 或者函数调用
+    */
+   else{
+        expression(Assign);
+        match(';');
+   }
+
+}
 //全局声明分析
 void global_declaration(){
     /*
