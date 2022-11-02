@@ -47,6 +47,8 @@ int *current_id,     //当前解析的标识符
     *symbols;        //符号表
 int  *idmain;       //main函数入口
 
+int basetype;       //基本类型
+int expr_type;      //表达式类型
 
 /*虚拟机指令集
     带有参数的指令在前，不带的在后
@@ -74,6 +76,16 @@ enum{
 enum{
     CHAR,INT,PTR
 };
+
+//匹配当前标记是否正确
+void match(int tk){
+    if(token==tk){
+        next();
+    }else{
+        printf("行(%d):预期为(%d),实际为(%d)\n",line,tk,token);
+        exit(-1);
+    }
+}
 
 //用于词法分析，获取下一个标记，自动忽略空白字符
 void next(){
@@ -303,13 +315,135 @@ void next(){
     return ;
 }
 
+//enum解析
+void enum_declaration(){
+    //enum [id] {a=1,b=2,c=3}
+    int i;
+    i = 0;
+    while(token!='}'){
+        //标识符声明出错
+        if(token!=Id){
+            printf("行%d:enum标识符声明出错!",line);
+            exit(-1);
+        }
+
+        next();
+        if(token==Assign){
+            next();
+            if(token!=Num){
+                printf("行%d:enum标识符赋值非数值!",line);
+                exit(-1);
+            }
+            i = token_val;//保存读取的数值
+            next();
+        }
+
+        current_id[Class] = Num;
+        current_id[Type]  = INT;
+        current_id[Value] = i;
+
+        if(token==','){
+            next();
+        }
+
+    }
+}
+
+//全局声明分析
+void global_declaration(){
+    /*
+    global_declaration ::= function_decl | enum_decl | variable_enum
+
+    funtion_decl ::= type {'*'} id '('  parameter_decl ')' '{' body_decl '}'
+
+    enum_decl    ::= enum [id] '{' id ['=' 'num'] {, id ['=' 'num']}  '}'
+
+    variable_decl::= type {'*'} id {',' {'*'} id} ';'  
+    */
+
+   int type;    //变量实际类型
+   int i;       //临时变量
+
+   basetype = INT;
+
+    //Enum标记单独处理
+   if(token==Enum){
+        //enum [id] {a=10,b=20,...}
+        match(Enum);
+        //存在名称id
+        if(token!='{'){
+            match(Id);//跳过[id]
+        }
+        if(token=='{'){
+            match('{');
+            enum_declaration();
+            match('}');
+        }
+
+        match(';');
+        return ;
+   }
+
+    //解析类型信息
+    if(token==Int){
+        match(Int);
+    }
+    else if(token==Char){
+        match(Char);
+        basetype = CHAR;
+    }
+
+    //解析逗号分割的变量声明
+    while(token!=';'&&token!='}'){
+        type = basetype;
+        //解析参数类型，可能存在多重指针类型'int*** x'
+        while(token==Mul){
+            match(Mul);
+            type = type + PTR;
+        }
+
+        //解析变量名，若变量名不为标识符类型，说明出现错误
+        if(token!=Id){
+            printf("行%d: 变量声明出现错误!\n",line);
+            exit(-1);
+        }
+
+        //如果符号表中该标识符类型已经存在，说明当前全局声明出现重复
+        if(current_id[Class]){
+            printf("行%d: 出现重复全局声明！",line);
+            exit(-1);
+        }
+
+        //匹配标识符，并声明标识符类型
+        match(Id);
+        current_id[Type] = type;
+
+        //分析完成，需要开始提前检测当前是一个普通变量还是函数
+        if(token=='('){//函数的参数左括号
+            current_id[Class] = Fun;          //当前标识符为函数
+            current_id[Value] = (int)(text+1);//存放当前函数的起始地址
+            function_declaration();
+        }else{//全局变量
+            current_id[Class] = Glo;          //全局变量
+            current_id[Value] = (int)data;    //存放当前变量内存地址
+            data = data + sizeof(int);
+        }
+
+        //int a,b,c...
+        if(token==','){
+            match(',');
+        }
+    }
+    next();
+}
 
 //语法分析的入口，分析整个c语言程序
 void program(){
     next();
     while(token>0){
         printf("token is: %c\n",token);
-        next();
+        //全局声明语法分析
+        global_declaration();
     }
 }
 
