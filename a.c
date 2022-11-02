@@ -42,12 +42,121 @@ enum {
 };
 
 
+/*
+标识符，也就是一个变量名，在词法分析过程中，我们不关心变量的名称是什么，我们只关心这个变量名代表的唯一标识。
+（例如 int a; 定义了变量 a，而之后的语句 a = 10，我们需要知道这两个 a 指向的是同一个变量。）
+在词法分析过程中会将标识符加入symbol table内，对于已经出现过的标识符，直接返回。
+struct identifier {
+    int token;  标识符返回的标记，理论上所有的变量返回的标识符都是id，但是还存在if，else，return等关键字，他们也存在对于的标记
+    int hash; 标识符的hash值，用于标识符的快速比较
+    char * name; 标识符本身字符串
+    int class; 标识符类别，如数字，全局变量，局部变量
+    int type; 标识符的类型，即是个变量时，是int还是char
+    int value;  标识符的值，如果是个函数，存放的是函数的地址
+    int Bclass; 下述三个B***用于区别全局标识符和局部标识符，当局部标识符的名字与全局标识符相同时，用作保存全局标识符的信息。
+    int Btype;
+    int Bvalue;
+}*/
+int token_val;      //当前标识符的值,主要用于识别数值
+int *current_id,     //当前解析的标识符
+    *symbols;        //符号表
+
+/*符号表中，标识符的域*/
+enum{
+    Token,Hash,Name,Class,Type,Value,Bclass,Btype,Bvalue,IdSize
+};
+
 //用于词法分析，获取下一个标记，自动忽略空白字符
 void next(){
     char *last_pos;
     int hash;
 
-    token = *src++;
+    //开始解析源码
+    while(token=*src){
+        ++src;
+
+        /*跳过换行符*/
+        if(token == '\n'){
+            line++;
+        }
+        /*不支持宏定义，直接跳过*/
+        else if(token == '#'){
+            while(*src!=0 || *src!='\n'){
+                src++;
+            }
+        }
+        /*读取变量，变量名只能以a-z，A-Z，_开头*/
+        else if((token>='a'&&token<='z')||(token>='A'&&token<='Z')||(token=='_')){
+            //记录起始位置
+            last_pos = src;
+            hash = token;
+
+            //读取整个变量
+            while((token>='a'&&token<='z')||(token>='A'&&token<='Z')||(token=='_')||(token>='0'&&token<='9')){
+                hash = hash*147 + *src;
+                src++;
+            }
+
+            //在符号表中进行线性检测，如果存在，直接返回
+            current_id = symbols;
+            while(current_id[Token]){
+                //hash值一致且标识名一致，存在并返回
+                if(current_id[Hash]==hash && memcmp((char*)current_id[Name],last_pos,src-last_pos)){
+                    token  = current_id[Token];
+                    return;
+                }
+                //移动到下一个标识符
+                current_id += IdSize;
+            }
+
+            //符号表中不存在当前标识，说明当前标识第一次出现，记录到符号表中
+            current_id[Hash] = hash;
+            current_id[Name] = (int)last_pos;
+            token = current_id[Token] = Id;
+            return ;
+            
+        }
+        /*识别数字 
+        识别十进制，八进制，十六进制三种格式数值*/
+        else if(token>='0'&&token<='9'){
+
+            token_val = token - '0';
+
+            if(token_val>0){//十进制，1-9开头
+                while(*src>='0'&&*src<='9'){
+                    token_val = token_val*10 + *src++ - '0';
+                }
+            }
+            //以0开头，不是八进制就是十六进制
+            else{
+                if(*src=='x'||*src=='X'){//十六进制
+                    token = *++src;
+                    while((token>='0'&&token<='9')||(token>='a'&&token<='f')||(token>='A'&&token<='F')){
+                        //这里的（token&15）获取16进制的个位，token>='A'用于判断是超出A，超出需要加9
+                        //尝试带入'A'（41）或者'a'（61）就可以理解这里的含义。
+                        token_val = token_val*16 + (token&15) + (token>='A'?9:0);
+                        token = *++src;
+                    }
+                }else{//八进制
+                    token = *src;
+                    while(token>='0'&&token<='7'){
+                        token_val = token_val*8 + token-'0';
+                        token = *++src;
+                    }
+                }
+            }
+            token = Num;
+            return ;
+        }
+        /*字符串*/
+        else if(){
+
+        }
+        /*注释*/
+        else if(){
+            
+        }
+    }
    
     return ;
 }
