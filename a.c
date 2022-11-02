@@ -25,8 +25,6 @@ int *pc,        //程序计数器，记录下一条指令执行地址
     ax,         //普通寄存器，存放一条指令执行后的结果
     cycle;
 
-
-
 /*
 标识符，也就是一个变量名，在词法分析过程中，我们不关心变量的名称是什么，我们只关心这个变量名代表的唯一标识。
 （例如 int a; 定义了变量 a，而之后的语句 a = 10，我们需要知道这两个 a 指向的是同一个变量。）
@@ -49,6 +47,8 @@ int  *idmain;       //main函数入口
 
 int basetype;       //基本类型
 int expr_type;      //表达式类型
+
+int index_of_bp;     //bp指针在栈上的索引
 
 /*虚拟机指令集
     带有参数的指令在前，不带的在后
@@ -346,6 +346,153 @@ void enum_declaration(){
             next();
         }
 
+    }
+}
+
+//函数参数解析
+void function_parameter(){
+    //type func ( ... ) {...}
+    //          |解析这|
+    int type;
+    int params;
+    params = 0;
+
+    while(token!=')'){
+        //int name..
+        type = INT;
+        //类型匹配
+        if(token== Int){
+            match(Int);
+        }else if(token==Char){
+            type = CHAR;
+            match(Char);
+        }
+
+        //可能为指针类型
+        while(token==Mul){
+            type = type + PTR;
+            match(Mul);
+        }
+
+        //匹配变量名标识符
+         if(token!=Id){
+            printf("行%d: 变量声明出现错误!\n",line);
+            exit(-1);
+        }
+
+        //如果符号表中该标识符类型已经存在，说明当前全局声明出现重复
+        if(current_id[Class]==Loc){
+            printf("行%d: 出现重复局部变量声明！",line);
+            exit(-1);
+        }
+
+        match(Id);
+
+        //保存本地变量
+        current_id[Bclass] = current_id[Class];
+        current_id[Class] = Loc;
+        current_id[Btype] = current_id[Type];
+        current_id[Type] = type;
+        current_id[Bvalue] = current_id[Value];
+        current_id[Value] = params++;//存放参数位置
+
+        if(token==','){
+            match(',');
+        }
+
+    }
+    index_of_bp = params+1;
+}
+
+//函数体接卸
+void function_body(){
+    //type funcname (...) {...}
+    //                    |解析这|
+
+    //{
+    // 1.local declaration
+    // 2.statement
+    //}
+
+    int pos_local ;    //局部变量在栈帧中的位置
+    int type;
+    pos_local = index_of_bp;
+
+    while(token==Int || token==Char){
+        basetype = (token==Int) ? INT:CHAR;
+        match(token);
+
+        while(token!=';'){
+            type = basetype;
+            while(token==Mul){
+                match(Mul);
+                type = type + PTR;
+            }
+
+            if(token!=Id){
+                printf("行%d:局部变量声明出错!",line);
+                exit(-1);
+            }
+
+            //当前符号表中的标识符是局部变量，说明出现重复局部变量
+            if(current_id[Type]==Loc){
+                printf("行%d:局部变量重复声明!",line);
+                exit(-1);
+            }
+
+            match(Id);
+            
+            //保存局部变量，可能存在同名的全局变量，将符号表中全局变量的域用正常域进行填充，
+            //后续离开函数时再恢复，保证了局部变量在函数内对全局变量的覆盖
+            current_id[Bclass] = current_id[Class];
+            current_id[Class] = Loc;
+            current_id[Btype] = current_id[Type];
+            current_id[Type] = type;
+            current_id[Bvalue] = current_id[Value];
+            current_id[Value] = ++pos_local;   //当前参数的索引
+
+            if(token==','){
+                match(',');
+            }
+        }
+
+        match(';');
+    }
+
+    //保存局部变量在栈帧中的大小
+    *text = ENT;
+    *text = pos_local - index_of_bp;
+
+    //进行语句分析
+    while(token!='}'){
+        statement();
+    }
+
+    //离开函数
+    *text = LEV;
+}
+
+//函数声明解析
+void function_declaration(){
+    //type func_name (...) {...}
+
+    match('(');
+    function_parameter();
+    match(')');
+    match('{');
+    function_body();
+    //match('}');  不在此处完成函数体的读取，否则外层的循环无法正确检验到函数体的结束，所以我们将结束符号'}'的解析交给外出循环
+
+    //完成函数体的编译，我们需要将在编译过程中被同名局部变量覆盖的全局变量进行恢复
+    current_id = symbols;
+    //扫描一遍符号表
+    while(current_id[Token]){
+        if(current_id[Class]==Loc){//发现局部变量
+            current_id[Class] = current_id[Bclass];
+            current_id[Type]  = current_id[Btype];
+            current_id[Value] = current_id[Bvalue];
+        }
+        current_id = current_id + IdSize;
     }
 }
 
