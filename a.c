@@ -50,6 +50,7 @@ int expr_type;      //表达式类型
 
 int index_of_bp;     //bp指针在栈上的索引
 
+int *tmp;
 /*虚拟机指令集
   带有参数的指令在前，不带的在后
 */
@@ -964,7 +965,6 @@ void expression(int level){
 }
 
 
-
 //语句分析 语句=表达式+;
 void statement(){
 
@@ -1398,21 +1398,106 @@ void program(){
     }
 }
 
+//输出虚拟机指令
+void instrucment(int op){
+
+    if(op==IMM){
+        printf("IMM %d\n",ax);
+    }else if(op==LI){
+        printf("LI %d\n",ax);
+    }else if(op==LC){
+        printf("LC %c\n",ax);
+    }else if(op==SI){
+        printf("SI %d\n",ax);
+    }else if(op==SC){
+        printf("SC %c\n",ax);
+    }else if(op==PUSH){
+        printf("PUSH %d\n",ax);
+    }else if(op==LEA){
+        printf("LEA %d\n",*(pc-1));
+    }else if(op==JMP){
+        printf("JMP %d\n",pc);
+    }else if(op==JZ){
+        printf("JZ %d\n",pc);
+    }else if(op==JNZ){
+        printf("JNZ %d\n",pc);
+    }else if(op==CALL){
+        printf("CALL %d\n",pc);
+    }else if(op==ENT){
+        printf("ENT <%d>\n",*(pc-1));
+    }else if(op==ADJ){
+        printf("ADJ <%d>\n",*(pc-1));
+    }else if(op==LEV){
+        printf("***LEV***\n");
+    }else if(op==OPEN){
+        printf("NC:open(%s,%d)\n",(char*)sp[1],sp[0]);
+    }else if(op==CLOS){
+        printf("NC:close(%d)\n",*sp);
+    }else if(op==READ){
+        printf("NC:read(%d,%s,%d)\n",sp[2],(char*)sp[1],*sp);
+    }else if(op==PRTF){
+       // printf("NC:printf(%s,%d,%d,%d,%d,%d,%d)\n",(char*)tmp[-1],tmp[-2],tmp[-3],tmp[-4],tmp[-5],tmp[-6]);
+    }else if(op==MALC){
+        printf("NC:malloc(%d)\n",*sp);
+    }else if(op==MSET){
+        printf("NC:memset(%s,%d,%d)\n",(char*)sp[2],sp[1],*sp);
+    }else if(op==MCMP){
+        printf("NC:memcmp(%s,%s,%d)\n",(char*)sp[2],(char*)sp[1],*sp);
+    }
+}
+//输出虚拟机运算符表达式
+void operator(int op){
+    
+    if(op==OR){
+        printf("%d | %d\n",*sp,ax);
+    }else if(op==XOR){
+        printf("%d ^ %d\n",*sp,ax);
+    }else if(op==AND){
+        printf("%d & %d\n",*sp,ax);
+    }else if(op==EQ){
+        printf("%d == %d\n",*sp,ax);
+    }else if(op==NE){
+        printf("%d != %d\n",*sp,ax);
+    }else if(op==LT){
+        printf("%d < %d\n",*sp,ax);
+    }else if(op==LE){
+        printf("%d <= %d\n",*sp,ax);
+    }else if(op==GT){
+        printf("%d > %d\n",*sp,ax);
+    }else if(op==GE){
+        printf("%d >= %d\n",*sp,ax);
+    }else if(op==SHL){
+        printf("%d << %d\n",*sp,ax);
+    }else if(op==SHR){
+        printf("%d >> %d\n",*sp,ax);
+    }else if(op==ADD){
+        printf("%d + %d\n",*sp,ax);
+    }else if(op==SUB){
+        printf("%d - %d\n",*sp,ax);
+    }else if(op==MUL){
+        printf("%d * %d\n",*sp,ax);
+    }else if(op==DIV){
+        printf("%d / %d\n",*sp,ax);
+    }else if(op==MOD){
+        printf("%d % %d\n",*sp,ax);
+    }
+
+}
 
 //虚拟机入口，解释目标代码
 int eval(){
     //读取指令
-    int op,*tmp;
+    int op;
     //循环次数
     int cycle ;
     cycle = 0;
     while(1){
         cycle++;
         op = *pc++;
-
+         operator(op);
         /*load&store*/
         //将pc中的值读入ax
-        if(op==IMM) ax = *pc++;   
+        if(op==IMM) ax = *pc++; 
         //加载ax中保存地址指向的int型值到ax    
         else if(op==LI) ax = *(int*)ax; 
         //加载ax中保存地址指向的char型值到ax
@@ -1459,7 +1544,7 @@ int eval(){
             pc = (int*)*sp++;//pc更新为调用子函数时下一条指令的地址，至此，指令执行流回归正常。
         }
 
-
+       
         /*运算符指令*/
         else if (op == OR)  ax = *sp++ | ax;
         else if (op == XOR) ax = *sp++ ^ ax;
@@ -1481,22 +1566,24 @@ int eval(){
     /*为了实现自举，需要实现printf，但直接实现一个printf比较繁琐，与我们的目标背道而驰
     这里直接调用本地函数
     */
-   else if (op == EXIT) {
-    printf("exit(%d)", *sp); return *sp;}
-    else if (op == OPEN) { ax = open((char *)sp[1], sp[0]); }
-    else if (op == CLOS) { ax = close(*sp);}
-    else if (op == READ) { ax = read(sp[2], (char *)sp[1], *sp); }
-    else if (op == PRTF) { tmp = sp + pc[1]; ax = printf((char *)tmp[-1], tmp[-2], tmp[-3], tmp[-4], tmp[-5], tmp[-6]); }
-    else if (op == MALC) { ax = (int)malloc(*sp);}
-    else if (op == MSET) { ax = (int)memset((char *)sp[2], sp[1], *sp);}
-    else if (op == MCMP) { ax = memcmp((char *)sp[2], (char *)sp[1], *sp);}
+        else if (op == EXIT) {
+            printf("exit(%d)", *sp); return *sp;}
+            else if (op == OPEN) { ax = open((char *)sp[1], sp[0]); }
+            else if (op == CLOS) { ax = close(*sp);}
+            else if (op == READ) { ax = read(sp[2], (char *)sp[1], *sp); }
+            else if (op == PRTF) { tmp = sp + pc[1]; ax = printf((char *)tmp[-1], tmp[-2], tmp[-3], tmp[-4], tmp[-5], tmp[-6]); }
+            else if (op == MALC) { ax = (int)malloc(*sp);}
+            else if (op == MSET) { ax = (int)memset((char *)sp[2], sp[1], *sp);}
+            else if (op == MCMP) { ax = memcmp((char *)sp[2], (char *)sp[1], *sp);}
 
-    //未知指令
-    else {
-        printf("unknown instruction:%d\n", op);
-        return -1;
+        //未知指令
+        else {
+            printf("unknown instruction:%d\n", op);
+            return -1;
+        }
+    instrucment(op);
     }
-    }
+    
     return 0;
 }
 

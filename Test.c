@@ -18,7 +18,7 @@ int main(){
     c = add(a,b);
 
     while(c>0){
-        printf("Dec c util c is 0,c:%d\n",c);
+        printf("Dec c util c is 0. Now,c is %d\n",c);
         c--;
     }
 
