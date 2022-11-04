@@ -6,7 +6,7 @@
 
 #define int long long
 
-int token;        //指向当前代码中的token
+int token ;        //指向当前代码中的token
 char *src,*old_src; //指向源代码字符串
 int poolsize;       //模拟的text/data/stack大小
 int line;           //行号
@@ -77,16 +77,6 @@ enum{
     CHAR,INT,PTR
 };
 
-//匹配当前标记是否正确
-void match(int tk){
-    if(token==tk){
-        next();
-    }else{
-        printf("行(%d):预期为(%d),实际为(%d)\n",line,tk,token);
-        exit(-1);
-    }
-}
-
 //用于词法分析，获取下一个标记，自动忽略空白字符
 void next(){
     char *last_pos;
@@ -102,7 +92,7 @@ void next(){
         }
         /*不支持宏定义，直接跳过*/
         else if(token == '#'){
-            while(*src!=0 || *src!='\n'){
+            while(*src!=0 &&*src!='\n'){
                 src++;
             }
         }
@@ -122,7 +112,7 @@ void next(){
             current_id = symbols;
             while(current_id[Token]){
                 //hash值一致且标识名一致，存在并返回
-                if(current_id[Hash]==hash && memcmp((char*)current_id[Name],last_pos,src-last_pos)){
+                if(current_id[Hash]==hash && !memcmp((char*)current_id[Name],last_pos,src-last_pos)){
                     token  = current_id[Token];
                     return;
                 }
@@ -176,9 +166,9 @@ void next(){
             while(*src!=0&&*src!=token){
                 //仅支持'\n'这种转义字符
                 token_val = *src++;
-                if(token_val = '\\'){
+                if(token_val == '\\'){
                     token_val = *src++;
-                    if(token_val = 'n'){
+                    if(token_val == 'n'){
                         token_val = '\n';
                     }
                 }
@@ -205,7 +195,7 @@ void next(){
                 }
             }else{
                 //除法符号
-                token = DIV;
+                token = Div;
                 return;
             }
         }
@@ -315,38 +305,783 @@ void next(){
     return ;
 }
 
-//enum解析
-void enum_declaration(){
-    //enum [id] {a=1,b=2,c=3}
-    int i;
-    i = 0;
-    while(token!='}'){
-        //标识符声明出错
-        if(token!=Id){
-            printf("行%d:enum标识符声明出错!",line);
+//匹配当前标记是否正确
+void match(int tk){
+    if(token==tk){
+        next();
+    }else{
+        printf("行(%d):预期为(%d),实际为(%d)\n",line,tk,token);
+        exit(-1);
+    }
+}
+
+//解析表达式 
+/*优先级爬山
+    单元运算符优先级高于二元，三元运算符
+    在解析过程中，使用stack保存参数变量，而expression函数的递归调用栈来保存操作符
+    通过递归函数实现优先级爬山
+
+    用 expression(level) 进行解析的时候，我们其实通过了参数 level 指定了当前的优先级
+*/
+void expression(int level){
+
+    int *id;    //当前标识符
+    int tmp;
+    int *addr;
+    //表达式有多种表达形式
+    //但主要分为两类：单元体(unit)和运算符(operators)
+    //例：(char) *a[10] = (int*) func(b>0?10:20);
+    //a[10] 是单元体unit *是运算符operator
+    //func()也是单元体
+    //我们应当先解析单元体和一元运算符,然后再解析二元，三元运算符
+    //表达式可以标识为下述形式:
+
+    //1. unit_unary ::= unit | unit unary_op | uary_op unit
+    //2. expr ::= unit_uary (bin_op unit_unary ...)
+
+
+     if (!token) {
+            printf("%d: unexpected token EOF of expression\n", line);
+            exit(-1);
+    }
+    /*常量 
+    应当直接加载到ax中
+     */
+    if(token==Num){
+        match(Num);
+
+        *++text = IMM;
+        *++text = token_val;
+        expr_type = INT;//表达式类型
+    }
+    /*字符串
+    支持char *p;
+    p = "first line"
+        "second line";
+    p实质等同于 "firsr linesecond line"
+    */
+    else if(token=='"'){
+        *++text = IMM;
+        *++text = token_val;
+
+        //继续匹配，查看是否存在上述匹配原则, 保存剩下的字符串
+        match('"');
+        while(token=='"'){
+            match('"');
+        }
+
+        //所有数据都默认为0，在字符串末尾添加'\0',只需将数据向前移动一个位置即可
+         data = (char *)(((int)data + sizeof(int)) & (-sizeof(int)));
+         expr_type = PTR;
+
+    }
+    /*sizeof
+    sizeof(int),sizeof(char),sizeof(*)都返回int
+    */
+   else if(token==Sizeof){
+        match(Sizeof);
+        match('(');
+        expr_type = INT;
+
+        if(token==Int){
+            match(Int);
+        }
+        else if(token==Char){
+            match(Char);
+            expr_type = CHAR;
+        }
+
+        while(token==Mul){
+            match(Mul);
+            expr_type = expr_type + PTR;
+        }
+
+        match(')');
+
+        *++text = IMM;
+        *++text = (expr_type==CHAR? sizeof(char):sizeof(int));
+
+        expr_type = INT;
+   }
+    /**
+     * 变量与函数调用
+     * 变量：全局，局部变量，enum
+     * 
+    */
+   else if(token==Id){
+
+        match(Id);
+        id = current_id;
+
+        //出现左括号说明是一个函数调用
+        if(token=='('){
+            match('(');
+            tmp = 0;//该函数的参数个数
+            //读取参数
+            while(token!=')'){
+                //可能存在：add(add(1,2),2)这种调用情况，所以需要递归调用expression进行表达式解析
+                expression(Assign); //参数值被保存在ax中
+                
+                *++text = PUSH;     //将保存在ax中的参数压入栈
+                tmp++;              //参数个数
+
+                if(token==','){
+                    match(',');
+                }
+            }
+            match(')');
+
+            //判断当前函数类型
+            if(id[Class]==Sys){//系统调用
+                *++text = id[Value];//保存系统函数调用地址
+            }else if(id[Class]==Fun){//自定义函数
+                *++text = CALL;
+                *++text = id[Value];//压入在函数解析时放入符号表中的函数地址
+            } else {
+                printf("行%d:函数调用错误！\n", line);
+                exit(-1);
+            }
+
+            //生成函数调用过程中，在栈帧中保存了函数参数，函数返回后需要清除这一部分空间
+            if(tmp>0){
+                *++text = ADJ;
+                *++text = tmp;
+            }
+
+            expr_type = id[Type];
+        }
+        //enum类型
+        else if(id[Class]==Num){
+            //加载enum类型到ax
+            *++text = IMM;
+            *++text = id[Value];
+            expr_type =INT;
+        }
+        //变量
+        else{
+            //局部变量
+            if(id[Class]==Loc){
+                //局部变量存放在栈上，想要得到该数值，
+                //index_of_bp等于2，想要得到局部变量，需要index_of_bp减去符号表中当前变量的value
+                //当变量为locala时，该value值等于3,这样LEV -1就能得到locala
+                /*
+                 * 0 a
+                 * 1 b
+                 * 2 bp     <--index_of_bp
+                 * 3 locala
+                 * 4 localb
+                 */
+                *++text = LEA;
+                *++text = index_of_bp - id[Value];
+            }    
+            else if(id[Class]==Glo){
+                *++text = IMM;
+                *++text = id[Value];
+            }
+            else{
+                printf("行%d:未定义变量!",line);
+                exit(-1);
+            }
+            //将ax中保存的上述变量的地址保存的值读取到ax中
+            expr_type = id[Type];
+            *++text = (expr_type==Char)?LC:LI;
+        }
+
+   }
+
+    /*括号或强制转换*/
+    else if(token=='('){
+        match('(');
+
+        if(token==Int||token==Char){//类型转换
+            tmp = (token==Char)?CHAR:INT;//转换的类型
+            match(token);
+
+            while(token==Mul){
+                 match(Mul);
+                tmp = tmp + PTR;
+            }
+
+            match(')');
+            expression(Inc);//强转和自增优先级一致
+
+            expr_type = tmp;
+
+        }else{//普通括号
+            expression(Assign);
+            match(')');
+        }
+    }
+
+    /*指针取值*/
+    else if (token == Mul) {
+        // dereference *<addr>
+        match(Mul);
+        expression(Inc); //取值和自增优先级一致
+
+        if (expr_type >= PTR) {
+            expr_type = expr_type - PTR;
+        } else {
+            printf("行%d: 引用出错\n", line);
             exit(-1);
         }
 
-        next();
-        if(token==Assign){
-            next();
-            if(token!=Num){
-                printf("行%d:enum标识符赋值非数值!",line);
+        //取值
+        *++text = (expr_type == CHAR) ? LC : LI;
+    }
+
+    /*取值
+    一般情况我们获取某个变量的地址，随后调用LI和LC指令获取地址上的值，
+    为了取值，我们删除取值操作LI，LC即可
+    */
+   else if(token == And){
+        match(And);
+        expression(Inc);
+        if(*text==LC||*text==LI){
+            text--;
+        }else{
+            printf("行%d: 取值错误!\n", line);
+            exit(-1);
+        }
+
+     expr_type = expr_type + PTR;
+   }
+
+    /*逻辑取反
+        没有直接指令，通过判断变量是否和0相等进行逻辑取反，0代表逻辑false*/
+    else if(token=='!'){
+        match('!');
+        expression(Inc);
+
+        *++text = PUSH;//将变量压入栈顶
+        *++text = IMM; //将ax置为0
+        *++text = 0;
+        *++text = EQ;//比较栈顶和ax是否一致，达到逻辑取反的目的
+
+        expr_type = INT;
+    }
+
+    /*按位取反
+        没有直接指令，通过异或实现安慰取法 ~a = a xor 0xFFFF*/
+    else if(token == '~'){
+        match('~');
+        expression(Inc);
+
+        *++text = PUSH; //压入变量
+        *++text = IMM; //将ax置为-1 = 0xFFFF
+        *++text = -1;
+        *++text = XOR;
+
+        expr_type = INT;
+    }
+
+    /*取正取反
+        取正不做任何操作
+        取反通过0-x实现*/
+    else if(token ==Add){
+        match(Add);
+        expression(Inc);
+
+        expr_type = INT;
+    }
+    else if(token ==Sub){
+         match(Sub);
+
+        //数值型
+        if (token == Num) {
+            *++text = IMM;
+            *++text = -token_val;
+            match(Num);
+        } else {
+            //直接*-1即可
+            *++text = IMM;
+            *++text = -1;
+            *++text = PUSH;
+            expression(Inc);
+            *++text = MUL;
+        }
+
+        expr_type = INT;
+    }
+
+    /**自增自减
+      ++p
+    */
+   else if(token==Inc || token==Dec){
+        tmp = token;
+        match(token);
+        expression(Inc);
+
+        //为了实现自增自减操作，需要使用p的地址两次
+        if(*text==LC){//为了避免当前自增自减变量丢失，需要先将当前变量地址压入栈顶，后续自增自减完成后再写入该地址内新值
+            *text = PUSH;
+            *++text = LC;
+        }else if(*text==LI){
+            *text = PUSH;
+            *++text = LI;
+        }else{
+            printf("行%d:自增自减出错!",line);
+        }
+
+        *++text = PUSH;
+        *++text = IMM;
+        //需要区分当前变量是否为指针型，是的话增加int长度，不是的话该指为普通变量，无论是int还是char都只加减1
+        *++text = (expr_type>PTR)?sizeof(int):sizeof(char);
+        *++text = (tmp==Inc)?ADD:SUB;
+        *++text = (expr_type==CHAR)?SC:SI;//将变化后的值写入先前压入栈的地址处
+   }
+
+
+    //开始处理二元运算符和后置运算符
+    //只有当当前运算符优先级大于传入运算符，才开始
+    while (token >= level) {
+       
+       tmp = expr_type ;
+        /**赋值操作 =
+         * a = (expression)
+         * 读取到a时生成 IMM <addr> ,LI ,
+         * 为了将expression赋值给a，需要保存a的地址，并将expression值写入该地址
+         * 所以上述指令变为 IMM <addr>, PUSH , (expression()读取expression值),SI/SC(写入expression)
+         * 
+        */
+       if(token==Assign){
+            match(Assign);
+            if(*text==LC||*text==LI){
+                *text = PUSH;//将当前变量a地址压入栈顶
+            }else{
+                 printf("行%d:赋值操作错误！\n", line);
                 exit(-1);
             }
-            i = token_val;//保存读取的数值
-            next();
+            expression(Assign);
+            expr_type = tmp;
+            *++text = (expr_type==CHAR)?SC:SI;
+       }
+
+        /*三目运算符
+         类似if语句
+         */
+        else if(token==Cond){
+            match(Cond);
+            *++text = JZ;
+            addr = ++text;//预留出false条件下的语句起始位置地址
+            expression(Assign);
+
+            if(token==':'){
+                match(':');
+            } else{
+                printf("行%d:三目运算符：丢失!",line);
+                exit(-1);
+            }
+
+            *addr = (int)(text+3);//写入之前JZ的参数
+            *++text = JMP;
+            addr = ++text;  //同样保留JMP参数位置
+            expression(Cond);//递归解析
+            *addr = (int)(text+1);
+        }
+    
+        /*逻辑运算符||和&&
+        <expr1> || <expr2>     <expr1> && <expr2>
+
+        ...<expr1>...          ...<expr1>...
+        JNZ b                  JZ b
+        ...<expr2>...          ...<expr2>...
+        b:                     b:
+        */
+       else if(token==Lor){
+            match(Lor);
+
+            *++text = JNZ;
+            addr = ++text;
+            expression(Lan);
+            *addr = (int)(text+1);
+
+            expr_type = INT;
+
+       }else if(token==Lan){
+            match(Lan);
+
+            *++text = JZ;
+            addr = ++text;
+            expression(Or);
+            *addr = (int)(text + 1);
+
+            expr_type = INT;
+       }
+
+       /*异或
+       <expr1> ^ <expr2>
+
+        ...<expr1>...          <- now the result is on ax
+        PUSH
+        ...<expr2>...          <- now the value of <expr2> is on ax
+        XOR
+        */
+       else if(token==Xor){
+            match(Xor);
+            *++text = PUSH;
+            expression(And);
+            *++text = XOR;
+            expr_type = INT;
+       }
+       else if(token==Or){
+            match(Or);
+            *++text = PUSH;
+            expression(Xor);
+            *++text = OR;
+            expr_type = INT;
+       }
+        else if(token==And){
+            match(And);
+            *++text = PUSH;
+            expression(Eq);
+            *++text = AND;
+            expr_type = INT;
+       }
+        else if(token==Eq){
+            match(Eq);
+            *++text = PUSH;
+            expression(Ne);
+            *++text = EQ;
+            expr_type = INT;
+       }
+        else if (token == Ne) {
+            // not equal !=
+            match(Ne);
+            *++text = PUSH;
+            expression(Lt);
+            *++text = NE;
+            expr_type = INT;
+        }
+        else if (token == Lt) {
+            // less than
+            match(Lt);
+            *++text = PUSH;
+            expression(Shl);
+            *++text = LT;
+            expr_type = INT;
+        }
+        else if (token == Gt) {
+            // greater than
+            match(Gt);
+            *++text = PUSH;
+            expression(Shl);
+            *++text = GT;
+            expr_type = INT;
+        }
+        else if (token == Le) {
+            // less than or equal to
+            match(Le);
+            *++text = PUSH;
+            expression(Shl);
+            *++text = LE;
+            expr_type = INT;
+        }
+        else if (token == Ge) {
+            // greater than or equal to
+            match(Ge);
+            *++text = PUSH;
+            expression(Shl);
+            *++text = GE;
+            expr_type = INT;
+        }
+        else if (token == Shl) {
+            // shift left
+            match(Shl);
+            *++text = PUSH;
+            expression(Add);
+            *++text = SHL;
+            expr_type = INT;
+        }
+        else if (token == Shr) {
+            // shift right
+            match(Shr);
+            *++text = PUSH;
+            expression(Add);
+            *++text = SHR;
+            expr_type = INT;
         }
 
-        current_id[Class] = Num;
-        current_id[Type]  = INT;
-        current_id[Value] = i;
+        /*相加
+        <expr1> + <expr2>
+        普通变量        指针变量
+        normal         pointer
 
-        if(token==','){
-            next();
+        <expr1>        <expr1>
+        PUSH           PUSH
+        <expr2>        <expr2>     |
+        ADD            PUSH        | <expr2> * <unit>
+                        IMM <unit>  |
+                        MUL         |
+                        ADD
+        */
+       else if(token == Add){
+            match(Add);
+            *++text = PUSH;
+            expression(Mul);
+
+            expr_type = tmp;
+            //判断当前expr1是否为指针类型,是的话int型指针需要*4
+            if(expr_type>PTR){
+                *++text = PUSH;
+                *++text = IMM;
+                *++text = sizeof(int);
+                *++text = MUL;
+            }
+
+            *++text = ADD;
+       }
+       /*
+       作指针减法时，如果是两个指针相减（相同类型），则结果是两个指针间隔的元素个数。因此要有特殊的处理。
+       */
+      else if(token ==Sub){
+            match(Sub);
+            *++text = PUSH;
+            expression(Mul);
+
+            //a - b
+            if(tmp>PTR && expr_type==tmp){//两者都是指针类型，求解的两指针间的元素个数
+                *++text = SUB;  //栈顶的a与ax中的b相减
+                *++text = PUSH; //差值压入栈顶
+                *++text = IMM;
+                *++text = sizeof(int);//指针大小
+                *++text = DIV;  //差值除以sizeof(int),得到元素个数
+                expr_type = INT;
+
+            }else if(tmp>PTR){//a为指针类型，b为普通类型，和相加一致
+                *++text = PUSH;//把b也压入栈顶
+                *++text = IMM;  //压入指针大小
+                *++text = sizeof(int);
+                *++text = MUL;  //得到指针a要移动的距离
+                *++text = SUB;  //减去移动距离
+                expr_type = tmp;
+            }else{//两者都是普通变量，正常相减即可
+                *++text = SUB;
+                expr_type = tmp;
+            }
         }
 
+       /*乘，除，取模较为简单，按顺序填入指令即可
+       */ 
+      else if (token == Mul) {
+            // multiply
+            match(Mul);
+            *++text = PUSH;
+            expression(Inc);
+            *++text = MUL;
+            expr_type = tmp;
+       }
+      else if (token == Div) {
+            // divide
+            match(Div);
+            *++text = PUSH;
+            expression(Inc);
+            *++text = DIV;
+            expr_type = tmp;
+        }
+      else if (token == Mod) {
+            // Modulo
+            match(Mod);
+            *++text = PUSH;
+            expression(Inc);
+            *++text = MOD;
+            expr_type = tmp;
+        } 
+
+      /*后置自增，自减
+      */
+     else if(token==Inc||token==Dec){
+        //实现ax中地址变量的自增或自减，同时需要返回原先值变量
+
+        //这里实现先对ax地址变量的自增或自减，随后再压入该变化后值，再反过来，自增的再自减，自减的再自增
+        //既改变了一开始ax中地址中的变量，同时返回了原先值
+
+        if(*text==LI){
+            *text = PUSH;
+            *++text = LI;
+        }else if(*text==LC){
+            *text = PUSH;
+            *++text = LC;
+        }else{
+            printf("行%d:后置自增自减出现错误!",line);
+            exit(-1);
+        }
+
+        *++text = PUSH;
+        *++text = IMM;
+        //指针移动int长度字节，普通变量变化char（1字节）长度
+        *++text = (expr_type>PTR)?sizeof(int):sizeof(char);
+        *++text = (token==Inc)? ADD:SUB;    //改变原先变量值
+        *++text = (expr_type==CHAR)?SC:SI;  //将变化后的值写入对应地址
+        *++text = PUSH;                     //将变化值压入栈中，后续执行相反操作
+        *++text = IMM;
+         //指针移动int长度字节，普通变量变化char（1字节）长度
+        *++text = (expr_type>PTR)?sizeof(int):sizeof(char);
+        *++text = (token==Inc)? SUB:ADD;    //对修改后的值执行相反操作，得到自增自减前的数值
+        match(token);
+     }
+    
+    /*数组取值操作
+        a[10] == *(a+10) 
+        按上述进行转换
+    */
+     else if(token ==Brak){
+        match(Brak);
+        *++text = PUSH;//压入当前的a
+        expression(Assign);
+        match(']');
+
+        if(tmp>PTR){
+            *++text = PUSH; //压入数组的偏移量
+            *++text = IMM;
+            *++text = sizeof(int);
+            *++text = MUL;  //指针类型偏移量需要乘上指针长度
+        }else if(tmp<PTR){
+            printf("行%d:预期为指针类型！",line);
+            exit(-1);
+        }
+
+        expr_type = tmp - PTR;  //获取指针类型
+        *++text = ADD;          //a指针地址添加具体偏移量
+        *++text = (expr_type==CHAR)?LC:LI;  //读取偏移后的数组位置
+
+     }
+    else {
+        printf("行%d:编译错误，token = %d\n", line, token);
+        exit(-1);
     }
+    }
+
+}
+
+
+
+//语句分析 语句=表达式+;
+void statement(){
+
+    // 1. if (...) <statement> [else <statement>]
+    // 2. while (...) <statement>
+    // 3. { <statement> }
+    // 4. return xxx;
+    // 5. <empty statement>;
+    // 6. expression; (expression end with semicolon)
+
+
+    int *a,*b;//跳转地址
+
+
+
+    //if语句分析
+    /**
+      if (...) <statement> [else <statement>]
+
+    if (<cond>)                   <cond>
+                                 JZ a
+    <true_statement>   ===>     <true_statement>
+    else:                        JMP b
+    a:                           a:
+    <false_statement>           <false_statement>
+    b:                           b: 
+
+    if语句条件成立就进入true_statement中进行执行，
+    不成立需要进入false_statement中，也就是JZ a
+    同时，如果true_statement执行完成，为了避免顺序执行false_statement
+    需要跳转到最后，也就是JMP b
+    */
+   if(token==If){
+
+        match(If);
+        match('(');
+        expression(Assign); //解析条件
+        match(')');
+
+        *++text = JZ;   //按照上述分析，加入JZ
+        b = ++text;     //保存JZ指令后一位置，等待后续语句解析完成，在该位置填入if语句结束的位置，这样才能在条件不满出时跳出if语句
+
+        statement();    //递归解析
+
+        if(token==Else){
+            match(Else);
+
+            //填入JMP b
+            *b = (int)(text+3); //这里先填入上述讲解中的a：,也就是false_statement前的a:
+            *++text = JMP;        //填入JMP
+            b = ++text;         //同样先指向JMP指令后一位置，因为我们还不知道要跳转到的b位置的具体地址，需要等待else中的语句解析完成 
+
+            statement();        //递归解析
+        }
+
+        *b = (int)(text+1);     //写入上文预留的填写b位置地址空间
+   }
+
+   /**while语句
+    * 
+   a:                    a:
+   while (<cond>)        <cond>
+                         JZ b
+    <statement>          <statement>
+                         JMP a
+    b:                   b:
+    * 
+   */
+    else if(token==While){
+        match(While);
+        a = text+1;     //保留a位置指针
+
+        match('(');
+        expression(Assign);
+        match(')');
+
+        *++text = JZ;
+        b = ++text;     //预留JZ参数位置
+
+        statement();    //递归解析
+
+        *++text = JMP;    //写入JMP a
+        *++text = (int)a;  
+
+        *b = (int)(text+1); //写入JZ的b
+    }
+
+    /**return 语句
+     * 遇到return意味函数退出，需要写入LEV指令
+    */
+   else if(token==Return){
+        match(Return);
+
+        if(token!=';'){
+            expression(Assign);
+        }
+
+        match(';');
+
+        *++text = LEV;
+   }
+
+    /**
+     {<statement> }
+    */
+   else if(token=='{'){
+        match('{');
+        while(token!='}'){
+            statement();
+        }
+        match('}');
+   }
+   /**
+    * <empty statement>
+   */
+   else if(token==';'){
+        match(';');
+   }
+    /**
+     a=b 或者函数调用
+    */
+   else{
+        expression(Assign);
+        match(';');
+   }
+
 }
 
 //函数参数解析
@@ -460,8 +1195,8 @@ void function_body(){
     }
 
     //保存局部变量在栈帧中的大小
-    *text = ENT;
-    *text = pos_local - index_of_bp;
+    *++text = ENT;
+    *++text = pos_local - index_of_bp;
 
     //进行语句分析
     while(token!='}'){
@@ -469,7 +1204,7 @@ void function_body(){
     }
 
     //离开函数
-    *text = LEV;
+    *++text = LEV;
 }
 
 /**
@@ -521,134 +1256,41 @@ void function_declaration(){
         current_id = current_id + IdSize;
     }
 }
-
-//语句分析 语句=表达式+;
-void statement(){
-
-    // 1. if (...) <statement> [else <statement>]
-    // 2. while (...) <statement>
-    // 3. { <statement> }
-    // 4. return xxx;
-    // 5. <empty statement>;
-    // 6. expression; (expression end with semicolon)
-
-
-    int *a,*b;//跳转地址
-
-
-
-    //if语句分析
-    /**
-      if (...) <statement> [else <statement>]
-
-    if (<cond>)                   <cond>
-                                 JZ a
-    <true_statement>   ===>     <true_statement>
-    else:                        JMP b
-    a:                           a:
-    <false_statement>           <false_statement>
-    b:                           b: 
-
-    if语句条件成立就进入true_statement中进行执行，
-    不成立需要进入false_statement中，也就是JZ a
-    同时，如果true_statement执行完成，为了避免顺序执行false_statement
-    需要跳转到最后，也就是JMP b
-    */
-   if(token==If){
-
-        match(If);
-        match('(');
-        expression(Assign); //解析条件
-        match(')');
-
-        *++text = JZ;   //按照上述分析，加入JZ
-        b = ++text;     //保存JZ指令后一位置，等待后续语句解析完成，在该位置填入if语句结束的位置，这样才能在条件不满出时跳出if语句
-
-        statement();    //递归解析
-
-        if(token==Else){
-            match(Else);
-
-            //填入JMP b
-            *b = (int)(text+3); //这里先填入上述讲解中的a：,也就是false_statement前的a:
-            *++text = JMP;        //填入JMP
-            b = ++text;         //同样先指向JMP指令后一位置，因为我们还不知道要跳转到的b位置的具体地址，需要等待else中的语句解析完成 
-
-            statement();        //递归解析
+ 
+//enum解析
+void enum_declaration(){
+    //enum [id] {a=1,b=2,c=3}
+    int i;
+    i = 0;
+    while(token!='}'){
+        //标识符声明出错
+        if(token!=Id){
+            printf("行%d:enum标识符声明出错!",line);
+            exit(-1);
         }
 
-        *b = (int)(text+1);     //写入上文预留的填写b位置地址空间
-   }
+        next();
+        if(token==Assign){
+            next();
+            if(token!=Num){
+                printf("行%d:enum标识符赋值非数值!",line);
+                exit(-1);
+            }
+            i = token_val;//保存读取的数值
+            next();
+        }
 
-   /**while语句
-    * 
-   a:                    a:
-   while (<cond>)        <cond>
-                         JZ b
-    <statement>          <statement>
-                         JMP a
-    b:                   b:
-    * 
-   */
-    else if(token==While){
-        match(While);
-        a = text+1;     //保留a位置指针
+        current_id[Class] = Num;
+        current_id[Type]  = INT;
+        current_id[Value] = i++;
 
-        mathch('(');
-        expression(Assign);
-        match(')');
+        if(token==','){
+            next();
+        }
 
-        *++text = JZ;
-        b = ++text;     //预留JZ参数位置
-
-        statement();    //递归解析
-
-        *++text = JMP;    //写入JMP a
-        *++text = (int)a;  
-
-        *b = (int)(text+1); //写入JZ的b
     }
-
-    /**return 语句
-     * 遇到return意味函数退出，需要写入LEV指令
-    */
-   else if(token==Return){
-        match(Return);
-
-        if(token!=';'){
-            expression(Assign);
-        }
-
-        match(";");
-
-        *++text = LEV;
-   }
-
-    /**
-     {<statement> }
-    */
-   else if(token=='{'){
-        match('{');
-        while(token!='}'){
-            statement();
-        }
-        match('}');
-   }
-   /**
-    * <empty statement>
-   */
-   else if(token==';'){
-        match(';');
-   }
-    /**
-     a=b 或者函数调用
-    */
-   else{
-        expression(Assign);
-        match(';');
-   }
-
 }
+
 //全局声明分析
 void global_declaration(){
     /*
@@ -741,16 +1383,12 @@ void global_declaration(){
 void program(){
     next();
     while(token>0){
-        printf("token is: %c\n",token);
+        //printf("token is: %c\n",token);
         //全局声明语法分析
         global_declaration();
     }
 }
 
-//解析表达式
-void expression(int level){
-
-}
 
 //虚拟机入口，解释目标代码
 int eval(){
@@ -770,9 +1408,9 @@ int eval(){
         //加载ax中保存地址指向的char型值到ax
         else if(op==LC) ax = *(char*)ax;
         //加载ax中int型值到栈顶保持的地址中
-        else if(op==SI) *(int*)*sp = ax;
-        //加载ax中char型值到栈顶保持地址中
-        else if(op==SC) *(char*)*sp = ax;
+        else if(op==SI) *(int*)*sp++ = ax;
+        //加载ax中char型值到栈顶、保持地址中
+        else if(op==SC)  ax =*(char*)*sp++ = ax;
         //将ax中值放入栈顶
         else if(op==PUSH) *--sp = ax; 
         //在子函数中需要获取传递的参数时使用，获取距离当前子函数栈帧基址地址偏移量位置的址，可能是在进入当前子函数前提前压入栈中的参数
@@ -807,8 +1445,8 @@ int eval(){
         //LEV 使用该指令替代RET 在函数执行完成后调用该指令，返回到调用该函数的父函数执行指令的下一条指令
         else if(op==LEV){
             sp = bp;//sp指向当前栈帧的基质地址处，该地址存放上一栈帧的地址
-            bp = (int*)*pc++;//更新bp，指向父函数的栈帧基址处
-            pc = (int*)*pc++;//pc更新为调用子函数时下一条指令的地址，至此，指令执行流回归正常。
+            bp = (int*)*sp++;//更新bp，指向父函数的栈帧基址处
+            pc = (int*)*sp++;//pc更新为调用子函数时下一条指令的地址，至此，指令执行流回归正常。
         }
 
 
@@ -833,7 +1471,8 @@ int eval(){
     /*为了实现自举，需要实现printf，但直接实现一个printf比较繁琐，与我们的目标背道而驰
     这里直接调用本地函数
     */
-   else if (op == EXIT) { printf("exit(%d)", *sp); return *sp;}
+   else if (op == EXIT) {
+    printf("exit(%d)", *sp); return *sp;}
     else if (op == OPEN) { ax = open((char *)sp[1], sp[0]); }
     else if (op == CLOS) { ax = close(*sp);}
     else if (op == READ) { ax = read(sp[2], (char *)sp[1], *sp); }
@@ -852,15 +1491,34 @@ int eval(){
 }
 
 int main(int argc,char** argv){
+
+    // int b = Id;
+    // printf("%d",b);
+    // printf("argc = %d\n", argc);
+	// for (int i = 0; i < argc; i++) {
+	// 	printf("argv[%d] = %s\n", i, argv[i]);
+	// }
+    // //   argc = 2;
+    // //  argv[1] = "helloworld.c";
+
+    // printf("argc = %d\n", argc);
+	// for (int i = 0; i < argc; i++) {
+	// 	printf("argv[%d] = %s\n", i, argv[i]);
+	// }
+
+   
     int i,fd;
+    int *tmp;
 
     argc--;
     argv++;
 
+  
     poolsize = 256*1024;    //自定义大小
     line = 1;
 
     
+  
 
     //为虚拟机设置内存（通过设置虚拟机实现自己的指令集，也就是汇编语言，该指令集作为编译器输出的目标代码）
     if(!(text=old_text=malloc(poolsize))){
@@ -877,11 +1535,16 @@ int main(int argc,char** argv){
             printf("can't malloc(%d) for stack segement",poolsize);
             return -1;
     }
+     if (!(symbols = malloc(poolsize))) {
+        printf("could not malloc(%d) for symbol table\n", poolsize);
+        return -1;
+    }
 
     //初始化三个区域
     memset(text,0,poolsize);
     memset(data,0,poolsize);
     memset(stack,0,poolsize);
+    memset(symbols, 0, poolsize);
 
     //初始化寄存器
     sp =bp =(int*)((int)stack+poolsize);
@@ -901,7 +1564,7 @@ int main(int argc,char** argv){
 
     //添加本地库函数调用
     i = OPEN;
-    while(i<EXIT){
+    while(i<=EXIT){
         next();
         current_id[Class] =Sys;
         current_id[Type] = INT;
@@ -911,12 +1574,12 @@ int main(int argc,char** argv){
     next(); current_id[Token] = Char; // handle void type
     next(); idmain = current_id; // keep track of main
 
-
-    //打开要读取读取的文件
+      //打开要读取读取的文件
     if((fd=open(*argv,0))<0){
         printf("can't open file(%s)\n",*argv);
         return -1;
     }
+    
 
     //分配内存
     if(!(src=old_src=malloc(poolsize))){
@@ -934,5 +1597,22 @@ int main(int argc,char** argv){
     close(fd);
 
     program();
+
+    //查看main函数是否加载
+    if (!(pc = (int *)idmain[Value])) {
+        printf("main()未定义\n");
+        return -1;
+    }
+
+    //设置栈帧，使main函数返回时可以正常退出
+    sp = (int*)((int)stack+poolsize);
+    *--sp = EXIT;       //main正常返回
+    *--sp = PUSH;       //压入返回值
+    tmp = sp;
+    *--sp = argc;       
+    *--sp = (int)argv;
+    *--sp = (int)tmp;
+
+
     return eval();
 }

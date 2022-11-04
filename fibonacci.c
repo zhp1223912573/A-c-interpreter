@@ -1,5 +1,7 @@
 #include<stdio.h>
 
+char * str;
+
 int fibonacci(int i){
      if(i<=1){
         return 1;
@@ -10,9 +12,13 @@ int fibonacci(int i){
 int main(){
     int i;
     i = 0;
+    str = "this is fibonacci.c!";
+    printf("%s\n",str);
+    
     while(i<=10){
-        printf("fibonacci(%2d) = %d\n",i,fibonacci(i));
+      
+           printf("fibonacci(%2d) = %d\n",i,fibonacci(i));
         i = i+1;
     }
-    return 0;
+    return 10;
 }
