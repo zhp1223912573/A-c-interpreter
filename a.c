@@ -17,7 +17,7 @@ int *text,      //代码段，存放代码
 char *data;     //数据段，存放初始化后的数据，保存都是字符型
 
 /*虚拟机寄存器
-    通过下四个寄存器保存当前计算机的运行状态
+/   通过下四个寄存器保存当前计算机的运行状态
 */
 int *pc,        //程序计数器，记录下一条指令执行地址
     *sp,        //栈指针寄存器，指向当前栈栈顶
@@ -33,9 +33,9 @@ struct identifier {
     int token;  标识符返回的标记，理论上所有的变量返回的标识符都是id，但是还存在if，else，return等关键字，他们也存在对于的标记
     int hash; 标识符的hash值，用于标识符的快速比较
     char * name; 标识符本身字符串
-    int class; 标识符类别，如数字，全局变量，局部变量
+   int class; 标识符类别，如数字，全局变量，局部变量
     int type; 标识符的类型，即是个变量时，是int还是char
-    int value;  标识符的值，如果是个函数，存放的是函数的地址
+   int value;  标识符的值，如果是个函数，存放的是函数的地址
     int Bclass; 下述三个B***用于区别全局标识符和局部标识符，当局部标识符的名字与全局标识符相同时，用作保存全局标识符的信息。
     int Btype;
     int Bvalue;
@@ -51,7 +51,7 @@ int expr_type;      //表达式类型
 int index_of_bp;     //bp指针在栈上的索引
 
 /*虚拟机指令集
-    带有参数的指令在前，不带的在后
+  带有参数的指令在前，不带的在后
 */
 enum { LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,
        OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
@@ -67,12 +67,12 @@ enum {
 };
 
 
-/*符号表中，标识符的域*/
+//符号表中，标识符的域*/
 enum{
     Token,Hash,Name,Class,Type,Value,Bclass,Btype,Bvalue,IdSize
 };
 
-/*变量和函数的类型*/
+//变量和函数的类型*/
 enum{
     CHAR,INT,PTR
 };
@@ -117,7 +117,7 @@ void next(){
                     return;
                 }
                 //移动到下一个标识符
-                current_id += IdSize;
+                current_id = current_id + IdSize;
             }
 
             //符号表中不存在当前标识，说明当前标识第一次出现，记录到符号表中
@@ -193,7 +193,16 @@ void next(){
                 while(*src!=0&&*src!='\n'){
                     src++;
                 }
-            }else{
+            }else if(*src=='*'){
+                src++;
+                while(*src!=0 && *(src+1)!=0 && (*src!='*' ||*(src+1)!='/')){
+                    if(*src=='\n') line++;
+                    src++; 
+                }
+                src++;
+                src++;            
+            }
+            else{
                 //除法符号
                 token = Div;
                 return;
@@ -1395,7 +1404,8 @@ int eval(){
     //读取指令
     int op,*tmp;
     //循环次数
-    int cycle = 0;
+    int cycle ;
+    cycle = 0;
     while(1){
         cycle++;
         op = *pc++;
@@ -1491,24 +1501,32 @@ int eval(){
 }
 
 int main(int argc,char** argv){
-
-    // int b = Id;
-    // printf("%d",b);
-    // printf("argc = %d\n", argc);
-	// for (int i = 0; i < argc; i++) {
-	// 	printf("argv[%d] = %s\n", i, argv[i]);
-	// }
-    // //   argc = 2;
-    // //  argv[1] = "helloworld.c";
-
-    // printf("argc = %d\n", argc);
-	// for (int i = 0; i < argc; i++) {
-	// 	printf("argv[%d] = %s\n", i, argv[i]);
-	// }
-
-   
+       
     int i,fd;
     int *tmp;
+    //debug使用
+    // int b = Id;
+    // printf("%d",b);
+    //printf("argc = %d\n", argc);
+	// for (int i = 0; i < argc; i++) {
+	// 	printf("argv[%d] = %s\n", i, argv[i]);
+	// }
+    //     argc = 2;
+    //    argv[1] = "zushi.c";
+
+    // printf("argc = %d\n", argc);
+
+	// for (int i = 0; i < argc; i++) {
+	// 	printf("argv[%d] = %s\n", i, argv[i]);
+	// }
+
+    //自举检验
+    i = 0;
+    while(i<argc){
+        printf("argv[%d] = %s\n",i,argv[i]);
+        i ++;
+    }
+    printf("**********************\n");
 
     argc--;
     argv++;
@@ -1613,6 +1631,6 @@ int main(int argc,char** argv){
     *--sp = (int)argv;
     *--sp = (int)tmp;
 
-
+    printf("***start the vm!***\n\n");
     return eval();
 }

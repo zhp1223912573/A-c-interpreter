@@ -1,0 +1,10 @@
+enum a{
+    Num = 128,ABc
+};
+
+int main(){
+
+    printf("enum.Num:%d\n",Num);
+    printf("enum.Abc:%d\n",ABc);
+    return -1;
+}
