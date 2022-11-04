@@ -1494,7 +1494,8 @@ int eval(){
     while(1){
         cycle++;
         op = *pc++;
-         operator(op);
+        //输出运算符操作
+         //operator(op);
         /*load&store*/
         //将pc中的值读入ax
         if(op==IMM) ax = *pc++; 
@@ -1581,7 +1582,8 @@ int eval(){
             printf("unknown instruction:%d\n", op);
             return -1;
         }
-    instrucment(op);
+    //输出指令操作
+    //instrucment(op);
     }
     
     return 0;
